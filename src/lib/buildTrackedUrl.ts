@@ -17,8 +17,9 @@ export type BuildResult =
  * This is where the team's naming convention gets enforced.
  */
 export function normalizeUtmValue(value: string): string {
-  // TODO: decide on the UTM naming convention (lowercase? spaces -> "_" or "-"?).
-  return value.trim();
+  // Casing is handled for the whole URL in buildTrackedUrl().
+  // Runs of whitespace become a single "-", e.g. "spring  2026" -> "spring-2026".
+  return value.trim().replace(/\s+/g, "-");
 }
 
 /** Adds https:// when the protocol is left off, e.g. "example.com/page". */
@@ -54,5 +55,7 @@ export function buildTrackedUrl(rawUrl: string, utm: UtmParams): BuildResult {
     if (normalized) url.searchParams.set(`utm_${key}`, normalized);
   }
 
-  return { ok: true, url: url.toString() };
+  // Force lowercase so the same link always produces the same QR code and
+  // analytics don't split "Newsletter" and "newsletter" into separate rows.
+  return { ok: true, url: url.toString().toLowerCase() };
 }

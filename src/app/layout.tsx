@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "QR Code Generator",
+  title: "RFL QR Generator",
   description: "Generate QR codes for URLs with UTM tracking parameters",
 };
 

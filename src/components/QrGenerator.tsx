@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 import { buildTrackedUrl, type UtmParams } from "@/lib/buildTrackedUrl";
+import ShortLinkRow from "@/components/ShortLinkRow";
 
 type FieldConfig = {
   id: string;
@@ -59,6 +60,12 @@ const QR_OPTIONS = {
 };
 
 const PNG_SIZE = 1024;
+
+const NO_UTM: UtmParams = { source: "", medium: "", campaign: "", content: "" };
+
+// Short links are remembered per subdomain + destination, so editing a field hides
+// links that no longer match and changing it back shows them again.
+const shortLinkKey = (host: string, destination: string) => `${host} ${destination}`;
 
 function Field({
   config,
@@ -129,7 +136,7 @@ function filenameFor(url: string) {
   }
 }
 
-export default function QrGenerator() {
+export default function QrGenerator({ shortLinkHosts }: { shortLinkHosts: string[] }) {
   const [url, setUrl] = useState("");
   const [utm, setUtm] = useState<UtmParams>({
     source: "",
@@ -139,23 +146,37 @@ export default function QrGenerator() {
   });
   const [svg, setSvg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [shortHost, setShortHost] = useState(shortLinkHosts[0] ?? "");
+  const [shortLinks, setShortLinks] = useState<Record<string, string>>({});
+  const [qrUsesShortLink, setQrUsesShortLink] = useState(true);
 
   const result = useMemo(() => buildTrackedUrl(url, utm), [url, utm]);
   const finalUrl = result.ok ? result.url : null;
+  const plainResult = useMemo(() => buildTrackedUrl(url, NO_UTM), [url]);
+  const plainUrl = plainResult.ok ? plainResult.url : null;
+  const hasUtm = Boolean(finalUrl && plainUrl && finalUrl !== plainUrl);
+
+  const trackedShortUrl = finalUrl ? shortLinks[shortLinkKey(shortHost, finalUrl)] : undefined;
+  const plainShortUrl = plainUrl ? shortLinks[shortLinkKey(shortHost, plainUrl)] : undefined;
+  const saveShortLink = (destination: string) => (shortUrl: string) =>
+    setShortLinks((prev) => ({ ...prev, [shortLinkKey(shortHost, destination)]: shortUrl }));
+
+  // What the QR code contains: the tracked URL, or its short link once one exists.
+  const qrValue = finalUrl && qrUsesShortLink && trackedShortUrl ? trackedShortUrl : finalUrl;
 
   useEffect(() => {
-    if (!finalUrl) return;
+    if (!qrValue) return;
     let cancelled = false;
-    QRCode.toString(finalUrl, { ...QR_OPTIONS, type: "svg" }).then((markup) => {
+    QRCode.toString(qrValue, { ...QR_OPTIONS, type: "svg" }).then((markup) => {
       if (!cancelled) setSvg(markup);
     });
     return () => {
       cancelled = true;
     };
-  }, [finalUrl]);
+  }, [qrValue]);
 
   // Hide a stale code as soon as the URL becomes empty or invalid.
-  const visibleSvg = finalUrl ? svg : null;
+  const visibleSvg = qrValue ? svg : null;
 
   const downloadSvg = () => {
     if (!visibleSvg || !finalUrl) return;
@@ -166,14 +187,14 @@ export default function QrGenerator() {
   };
 
   const downloadPng = async () => {
-    if (!finalUrl) return;
-    const dataUrl = await QRCode.toDataURL(finalUrl, { ...QR_OPTIONS, width: PNG_SIZE });
+    if (!finalUrl || !qrValue) return;
+    const dataUrl = await QRCode.toDataURL(qrValue, { ...QR_OPTIONS, width: PNG_SIZE });
     download(dataUrl, `${filenameFor(finalUrl)}.png`);
   };
 
   const copyUrl = async () => {
-    if (!finalUrl) return;
-    await navigator.clipboard.writeText(finalUrl);
+    if (!qrValue) return;
+    await navigator.clipboard.writeText(qrValue);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -198,7 +219,8 @@ export default function QrGenerator() {
             <h2 className="text-sm font-semibold text-zinc-900">UTM parameters</h2>
             <p className="mt-1 text-xs leading-relaxed text-zinc-500">
               Optional tags appended to the URL so analytics tools can attribute scans. Empty
-              fields are left out.
+              fields are left out, spaces become &quot;-&quot;, and the final URL is converted to
+              lowercase.
             </p>
           </div>
           {UTM_FIELDS.map((field) => (
@@ -209,6 +231,72 @@ export default function QrGenerator() {
               onChange={(value) => setUtm((prev) => ({ ...prev, [field.key]: value }))}
             />
           ))}
+        </fieldset>
+
+        <fieldset className="flex flex-col gap-4 border-t border-zinc-200 pt-6">
+          <legend className="sr-only">Short links</legend>
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-900">Short links</h2>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+              Leave the code empty for a random one, or type a readable code. Once a code is
+              printed, treat it as permanent.
+            </p>
+          </div>
+
+          {shortLinkHosts.length === 0 ? (
+            <p className="text-xs text-red-600">
+              No short-link subdomains are configured. Set SHORT_LINK_HOSTS in the environment.
+            </p>
+          ) : (
+            <>
+              {shortLinkHosts.length > 1 && (
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="short_host" className="text-sm font-medium text-zinc-900">
+                    Subdomain
+                  </label>
+                  <select
+                    id="short_host"
+                    value={shortHost}
+                    onChange={(e) => setShortHost(e.target.value)}
+                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+                  >
+                    {shortLinkHosts.map((host) => (
+                      <option key={host} value={host}>
+                        {host}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {!finalUrl || !plainUrl ? (
+                <p className="text-xs text-zinc-400">Enter a URL to create short links.</p>
+              ) : (
+                <>
+                  {hasUtm && (
+                    <ShortLinkRow
+                      key={shortLinkKey(shortHost, finalUrl)}
+                      id="short_tracked"
+                      label="Tracked URL (with UTMs)"
+                      destination={finalUrl}
+                      host={shortHost}
+                      shortUrl={trackedShortUrl}
+                      onCreated={saveShortLink(finalUrl)}
+                    />
+                  )}
+                  <ShortLinkRow
+                    key={shortLinkKey(shortHost, plainUrl)}
+                    id="short_plain"
+                    label={hasUtm ? "Main URL (without UTMs)" : "URL"}
+                    destination={plainUrl}
+                    host={shortHost}
+                    shortUrl={plainShortUrl}
+                    onCreated={saveShortLink(plainUrl)}
+                  />
+                </>
+              )}
+            </>
+          )}
         </fieldset>
       </section>
 
@@ -250,7 +338,19 @@ export default function QrGenerator() {
           </button>
         </div>
 
-        {finalUrl && (
+        {trackedShortUrl && (
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input
+              type="checkbox"
+              checked={qrUsesShortLink}
+              onChange={(e) => setQrUsesShortLink(e.target.checked)}
+              className="h-4 w-4 accent-zinc-900"
+            />
+            Put the short link in the QR code
+          </label>
+        )}
+
+        {qrValue && (
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3">
             <div className="mb-1 flex items-center justify-between">
               <span className="text-xs font-medium text-zinc-500">Encoded URL</span>
@@ -262,7 +362,7 @@ export default function QrGenerator() {
                 {copied ? "Copied" : "Copy"}
               </button>
             </div>
-            <p className="break-all font-mono text-xs text-zinc-800">{finalUrl}</p>
+            <p className="break-all font-mono text-xs text-zinc-800">{qrValue}</p>
           </div>
         )}
       </section>
