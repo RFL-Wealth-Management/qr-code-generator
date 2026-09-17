@@ -1,35 +1,29 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { COMPANY_EMAIL_DOMAIN, isCompanyEmail } from "@/lib/config";
 import { createClient } from "@/lib/supabase/server";
 
-export type LoginState = { status: "idle" | "sent" | "error"; message?: string };
+export type LoginState = { error?: string; email?: string };
 
-export async function sendMagicLink(_prev: LoginState, formData: FormData): Promise<LoginState> {
+export async function signIn(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const password = String(formData.get("password") ?? "");
 
   if (!isCompanyEmail(email)) {
-    return { status: "error", message: `Use your @${COMPANY_EMAIL_DOMAIN} email address.` };
+    return { email, error: `Use your @${COMPANY_EMAIL_DOMAIN} email address.` };
   }
-
-  const headerList = await headers();
-  const origin =
-    headerList.get("origin") ??
-    `${headerList.get("x-forwarded-proto") ?? "https"}://${headerList.get("host")}`;
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: `${origin}/auth/confirm` },
-  });
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) {
-    console.error("signInWithOtp failed", error);
-    return { status: "error", message: "Couldn't send the sign-in link. Try again in a minute." };
+    // Same message for unknown email and wrong password, so the form can't be used to find accounts.
+    if (error.code !== "invalid_credentials") console.error("signInWithPassword failed", error);
+    return { email, error: "Email or password is incorrect." };
   }
-  return { status: "sent", message: email };
+
+  redirect("/");
 }
 
 export async function signOut() {
