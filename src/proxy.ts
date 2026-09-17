@@ -7,7 +7,7 @@ import {
   requireEnv,
 } from "@/lib/config";
 
-const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PATHS = ["/login", "/forgot-password", "/auth/confirm"];
 
 export async function proxy(request: NextRequest) {
   const host = (request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "")
